@@ -1,66 +1,89 @@
+"""cGAN 采样界面：按类别生成 MNIST 手写数字。
+
+用法：
+    python app.py                        # 默认加载同目录下 checkpoint_50.pth
+    python app.py --ckpt checkpoint_10.pth
+    python app.py --share                # 生成 gradio 公网临时链接
+"""
+import argparse
+import os
+
 import gradio as gr
-import numpy as np
 import torch
-from PIL import Image
 from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid
-import matplotlib.pyplot as plt
+
 from cgan import Generator
 
-latent_dim = 100
-n_classes = 10
-img_size = 32
-channels = 1
-checkpoint = torch.load("checkpoint_50.pth")
-model = Generator()
-model.load_state_dict(checkpoint['generator_state_dict'])
-model.eval()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+LATENT_DIM = 100
+N_CLASSES = 10
 
 
-# 生成单个数字的图片
-def generate_image(class_idx):
-    with torch.no_grad():
-        # Generate random noise vector of latent_dim size
-        noise = torch.randn(1, latent_dim)
-        label = torch.tensor([int(class_idx)])
-        gen_img = model(noise, label).squeeze(0)
-    return to_pil_image(make_grid(gen_img, normalize=True))
+def load_model(ckpt_path, device):
+    """加载 checkpoint 里的生成器权重。"""
+    if not os.path.isabs(ckpt_path):
+        ckpt_path = os.path.join(BASE_DIR, ckpt_path)
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(
+            f"找不到权重文件 {ckpt_path}。请先运行 `python cgan.py` 训练，或用 --ckpt 指定别的路径。"
+        )
+
+    try:
+        # PyTorch >= 2.6 默认 weights_only=True，这里存的是 state_dict，两者都兼容
+        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=True)
+    except TypeError:
+        # 老版本 torch 没有 weights_only 参数
+        checkpoint = torch.load(ckpt_path, map_location=device)
+    except Exception:
+        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+
+    model = Generator().to(device)
+    model.load_state_dict(checkpoint['generator_state_dict'])
+    model.eval()
+    return model
 
 
-# Generate each digit
-image2 = generate_image(2)
-image0 = generate_image(0)
-image2_2 = generate_image(2)
-image3 = generate_image(3)
+def build_interface(model, device):
+    def generate_image(class_idx, n_row):
+        """按类别生成 n_row×n_row 个样本，拼成一张网格图。"""
+        class_idx = int(class_idx)
+        n_row = int(n_row)
+        with torch.no_grad():
+            noise = torch.randn(n_row * n_row, LATENT_DIM, device=device)
+            labels = torch.full((n_row * n_row,), class_idx, dtype=torch.long, device=device)
+            gen_img = model(noise, labels).cpu()
+        grid = make_grid(gen_img, nrow=n_row, normalize=True)
+        return to_pil_image(grid)
 
-# Convert PIL Images to numpy arrays
-image2 = np.array(image2)
-image0 = np.array(image0)
-image2_2 = np.array(image2_2)
-image3 = np.array(image3)
-
-# Concatenate images along the width
-image_2023 = np.concatenate((image2, image0, image2_2, image3), axis=1)
-
-# Convert back to PIL Image and show
-image_2023 = Image.fromarray(image_2023)
-plt.imshow(image_2023, cmap='gray')
-plt.show()
-
-# Create Gradio Interface
-noise_input = gr.inputs.Slider(minimum=-1.0, maximum=1.0, default=0, step=0.1, label="Noise")
-class_input = gr.inputs.Dropdown([str(i) for i in range(n_classes)], label="Class")
-output_image = gr.outputs.Image('pil')
-
+    return gr.Interface(
+        fn=generate_image,
+        inputs=[
+            gr.Dropdown(choices=[str(i) for i in range(N_CLASSES)], value="0", label="数字类别"),
+            gr.Slider(minimum=1, maximum=5, value=3, step=1, label="网格大小 n×n"),
+        ],
+        outputs=gr.Image(type="pil", label="生成结果"),
+        title="MNIST Generator",
+        description="用条件 GAN 按类别生成 MNIST 手写数字。每次点击都会重新采样，结果都不同。",
+        allow_flagging="never",
+    )
 
 
-gr.Interface(
-    fn=generate_image,
-    inputs=[class_input],
-    outputs=output_image,
-    title="MNIST Generator",
-    description="Generate images of handwritten digits from the MNIST dataset using a GAN.",
-    theme="default",
-    layout="vertical",
-    live=True
-).launch(debug=True)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ckpt", default="checkpoint_50.pth", help="checkpoint 路径")
+    parser.add_argument("--share", action="store_true", help="生成 gradio 公网临时链接")
+    parser.add_argument("--port", type=int, default=None, help="监听端口")
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model(args.ckpt, device)
+    print(f"已在 {device} 上加载 {args.ckpt}")
+
+    demo = build_interface(model, device)
+    demo.launch(share=args.share, server_port=args.port)
+
+
+if __name__ == "__main__":
+    main()
