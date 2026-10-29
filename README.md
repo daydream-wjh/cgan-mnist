@@ -1,4 +1,4 @@
-# cGAN
+# cgan-mnist
 
 条件生成对抗网络（Conditional GAN）生成 **MNIST 手写数字**：给定标签 0–9 与一个 100 维噪声向量，生成对应类别的 32×32 灰度数字图像。含训练脚本、Gradio 采样 demo，以及从第 0 轮到第 50 轮的检查点与按迭代轮次落盘的生成样例。
 
@@ -110,7 +110,7 @@ GAN 无监督，仓库里没有 FID/IS 等量化指标，也没有目视对比�
 ```
 
 - 现在的保存逻辑（`save_checkpoint()`）：文件名是 `f"checkpoint_{epoch + 1}.pth"`、内部字段是 `'epoch': epoch`，**也就是「文件名 = 0 基 epoch + 1」**，两者本来就不该相等（第 1 轮存出来的文件叫 `checkpoint_1.pth`、里面 `epoch=0`）；
-- 输出目录是 `--out_dir`（默认 `images/`），所以新跑出来的 checkpoint 会落在 `cGAN/images/` 下，而不是仓库根目录；
+- 输出目录是 `--out_dir`（默认 `images/`），所以新跑出来的 checkpoint 会落在 `cgan-mnist/images/` 下，而不是仓库根目录；
 - 仓库根目录这 6 个 `checkpoint_{0,10,20,30,40,50}.pth` 是**旧版本代码的产物**：文件名尾号与内部 `epoch` 字段相等（`checkpoint_0` 里 `epoch=0`、`checkpoint_50` 里 `epoch=50`），而按现在的命名规则（`f"checkpoint_{epoch + 1}.pth"` + `'epoch': epoch`）第 1 轮存出来的是 `checkpoint_1.pth`／`epoch=0`，永远不会产出 `_0`。所以这批文件来自别的版本，续训前请先 `print(ckpt["epoch"])` 确认，见下文「从 checkpoint 继续训练」；
 - `generator.pth` / `generator1.pth` 是**裸的 `state_dict`**（26 个键，与 `generator_state_dict` 完全一致），适合"只要采样"的场景，每个约 6.7 MB；
 - 完整 checkpoint 每个约 32 MB（`checkpoint_0.pth` 约 41 MB，体积异常，疑为另一次保存）；
@@ -171,7 +171,7 @@ pip install torch torchvision numpy matplotlib "gradio>=4"
 ## 目录结构
 
 ```
-cGAN/
+cgan-mnist/
 ├── cgan.py                    # G/D 定义 + main() 里的训练循环（有 __main__ 保护，import 不触发训练）
 ├── app.py                     # Gradio 4 采样 demo（默认加载 checkpoint_50.pth，可 --ckpt 换）
 ├── checkpoint_0.pth           # 旧版产物：完整训练状态（约 41 MB，体积异常）
@@ -195,20 +195,20 @@ cGAN/
 ### 1. 训练
 
 ```bash
-cd cGAN
+cd cgan-mnist
 python cgan.py                              # 默认 50 轮
 python cgan.py --n_epochs 50 --batch_size 64 --ckpt_interval 10
 python cgan.py --data_dir /path/to/mnist --out_dir /path/to/out
 ```
 
-MNIST 默认下载到 `cGAN/data/mnist`（`--data_dir`，基于 `__file__` 的绝对路径，换目录启动也不会乱写）。训练中每 400 次迭代往 `images/` 写一张网格图，每 10 轮存一次 `checkpoint_{epoch+1}.pth`，控制台逐 batch 打印 `[Epoch x/50] [Batch i/938] [D loss: …] [G loss: …]`，结束时把损失曲线保存为 `images/loss_curve.png`（不再弹窗、不会卡住）。
+MNIST 默认下载到 `cgan-mnist/data/mnist`（`--data_dir`，基于 `__file__` 的绝对路径，换目录启动也不会乱写）。训练中每 400 次迭代往 `images/` 写一张网格图，每 10 轮存一次 `checkpoint_{epoch+1}.pth`，控制台逐 batch 打印 `[Epoch x/50] [Batch i/938] [D loss: …] [G loss: …]`，结束时把损失曲线保存为 `images/loss_curve.png`（不再弹窗、不会卡住）。
 
 命令行参数**现在真正生效**：`opt` 用 `parser.parse_known_args()` 解析，`--n_epochs` / `--batch_size` / `--latent_dim` / `--sample_interval` / `--ckpt_interval` / `--data_dir` / `--out_dir` 都可以直接传；无法识别的多余参数会被忽略而不是让进程退出（这样被别的东西带参数 import 时也不炸）。
 
 ### 2. 采样（Gradio 交互界面）
 
 ```bash
-cd cGAN
+cd cgan-mnist
 python app.py                                   # 默认加载 checkpoint_50.pth
 python app.py --ckpt checkpoint_10.pth          # 换权重
 python app.py --port 7860                       # 指定端口
